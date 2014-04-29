@@ -107,11 +107,21 @@
                 <!-- 名前と参照元URL --!>
                 <a href="<: $hash.url :>"> <span style="font-size:large"> <: $hash.name :> </a> </span>  <br> 
                 <!-- 定員 -->
-                <i class="glyphicon glyphicon-home"></i>定員:<: $hash.capacity :> &nbsp;
+                <i class="glyphicon glyphicon-home"></i>定員:
+                    :if($hash.capacity > 0 || defined($hash.capacity)) {
+                        <: $hash.capacity :> &nbsp;
+                    :}else {
+                       &nbsp;-&nbsp; 
+                    :}
                 <!-- 参加人数 -->
                 <i class="glyphicon glyphicon-user"></i>申込:<: $hash.accepted :> &nbsp;
                 <!-- 残席 -->
-                <i class="glyphicon glyphicon-plus-sign"></i>残席：<: $hash.wating :> &nbsp;
+                <i class="glyphicon glyphicon-plus-sign"></i>残席：
+                    :if($hash.capacity > 0 || defined($hash.capacity)) {
+                        <: $hash.capacity-$hash.accepted :> &nbsp;
+                    :}else{
+                        &nbsp; - &nbsp;
+                    :}
                 <!-- タグ -->
                 <i class="glyphicon glyphicon-tags"></i>タグ:
                 :for $eventid_tagid -> $hash_et {

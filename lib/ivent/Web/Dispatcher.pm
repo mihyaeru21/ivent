@@ -7,18 +7,17 @@ use Data::Dumper;
 use URI::Escape;
 use Encode qw/encode decode/;
 use Time::Local qw(timelocal);
+use Time::Piece;
 
 any '/' => sub {
     my ($c) = @_;
 
-#    print Dumper $c->{request}->{env}->{HTTP_COOKIE};
-
-#cookieの取得
+    #cookieの取得
     my $cookies = $c->{request}->{env}->{HTTP_COOKIE};    #ブラウザからクッキーの取得
         my %COOKIE;
     my @checked_tags;
     my $checked_location = "";
-#取得したクッキーの整形
+    #取得したクッキーの整形
     my @pairs = split(/;/, $cookies);
     foreach my $pair (@pairs) {
         my ($name, $value) = split(/=/, $pair);
@@ -26,40 +25,40 @@ any '/' => sub {
 
         $COOKIE{$name} = $value;
 
-#欲しいクッキー内の情報を取り出す
+        #欲しいクッキー内の情報を取り出す
         if($name eq "selected_tags") {
             $value = uri_unescape($value);
             @checked_tags = split(/,/, $value);
-#        print Dumper @tags;
         }
 
         if($name eq "selected_location") {
             $value = uri_unescape($value);
             $checked_location = $value;
-#        print Dumper $checked_location;
         }
     }
 
-#都道府県の配列
+    #都道府県の配列
     my @prefectures = ("北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県", "茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県", "新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県");
 
-#DBからtagを取得する
+    #変数の宣言
     my @all_tags;
     my @id_checked_tags;
     my @serch_event_ids;
     my @list_event_info;
     my @eventid_tagid;
+    
+    #DBからタグを取り出す
     my $tags = $c->db->search_named(
-            q{SELECT * FROM tags ORDER BY id DESC},
+            q{SELECT * FROM tags ORDER BY id ASC},
             );
 
     while( my $row = $tags->next)
     {
-#tagとidのハッシュ
+        #tagとidのハッシュ
         my $hash_atag = {id => $row->id+0, name => $row->name};
         push(@all_tags, $hash_atag);
 
-#チェックされたtagとidの連想配列
+        #チェックされたtagとidの連想配列
         foreach my $ctag (@checked_tags) {
             if(decode('UTF-8', $ctag) eq $row->name) {
                 push(@id_checked_tags, $row->id+0);
@@ -67,15 +66,12 @@ any '/' => sub {
         }
     }
 
-#検索日から30日後のunixtimeを計算
-    my ($sec, $min, $hh, $dd, $mm, $yy, $weak, $yday, $opt) = gmtime(time());
-    $mm += 1;
-    $yy += 1900;
-    my $search_start_time = timelocal(0, 0, 0, $dd, $mm-1, $yy, $weak, $yday, $opt);
-    my $search_end_time = timelocal(0, 0, 0, $dd, $mm, $yy, $weak, $yday, $opt);
-#print Dumper $search_time;
+    #検索日から30日後のunixtimeを計算
+    my $t = localtime;
+    my $search_start_time = $t->epoch + (60 * 60 * 9);  #DB内がグリニッジ標準時なのでそれに合わせる
+    my $search_end_time = $search_start_time + (60 * 60 * 24 * 30);
 
-#チェックされたタグがあれば、それにに関するイベント情報を取得
+    #チェックされたタグがあれば、それにに関するイベント情報を取得
     if(@id_checked_tags) {
         my $iter = $c->db->search_named(
                 q{SELECT event_id, tag_id FROM events_tags WHERE tag_id IN :ids},
@@ -86,8 +82,7 @@ any '/' => sub {
             my $hash = {"event_id" => $row->event_id+0, "tag_id" => $row->tag_id+0};
             push(@eventid_tagid, $hash);
         }
-    }
-    else {
+    } else {
         my $iter = $c->db->search_named(
                 q{SELECT event_id, tag_id FROM events_tags},
                 );
@@ -99,7 +94,7 @@ any '/' => sub {
     }
 
     if(@serch_event_ids) {
-#取得したイベントIDを検索
+        #取得したイベントIDを検索
         if(!($checked_location eq "")) {
             my $iter_e = $c->db->search_named(
                     q{SELECT * FROM events WHERE location = :location AND started_at < :search_end_time AND started_at > :search_start_time AND id IN :ids ORDER BY started_at ASC},
@@ -107,22 +102,21 @@ any '/' => sub {
                     );
 
             while(my $row = $iter_e->next) {
-                my $hash_ev = {id => $row->id, name => $row->name, url => $row->url, capacity => $row->capacity, accepted => $row->accepted, wating => ($row->capacity - $row->accepted), location => $row->location, description => $row->description};
+                my $hash_ev = {id => $row->id, name => $row->name, url => $row->url, capacity => $row->capacity, accepted => $row->accepted, wating => $row->wating, location => $row->location, description => $row->description};
                 my $date = changeFromUnixtime($row->started_at, $row->ended_at);
                 $hash_ev->{date} = $date;
 
                 push(@list_event_info, $hash_ev); 
             }
 
-        }
-        else {
+        } else {
             my $iter_e = $c->db->search_named(
                     q{SELECT * FROM events WHERE location IN :location AND started_at < :search_end_time AND started_at > :search_start_time AND id IN :ids ORDER BY started_at ASC},
                     {search_end_time => $search_end_time, search_start_time => $search_start_time , location => \@prefectures, ids => \@serch_event_ids}
                     );
 
             while(my $row = $iter_e->next) {
-                my $hash_ev = {id => $row->id, name => $row->name, url => $row->url, capacity => $row->capacity, accepted => $row->accepted, wating => ($row->capacity - $row->accepted), location => $row->location, description => $row->description};
+                my $hash_ev = {id => $row->id, name => $row->name, url => $row->url, capacity => $row->capacity, accepted => $row->accepted, wating => $row->wating, location => $row->location, description => $row->description};
                 my $date = changeFromUnixtime($row->started_at, $row->ended_at);
                 $hash_ev->{date} = $date;
 
@@ -133,12 +127,7 @@ any '/' => sub {
 
     }
 
-
-#    while(my $row = $iter->next) {
-#    print Dumper $row->ivent_id;
-#   }
-
-#選択されました都道府県の配列番号を探す
+    #選択されました都道府県の配列番号を探す
     my $array_number_prefectures;
     if(!($checked_location eq "")) {
         for (my $i = 0; $i < 47; $i++) {
@@ -149,7 +138,7 @@ any '/' => sub {
         }
     }
 
-    return $c->render('test.tx' => {list_event_info => \@list_event_info, all_tags => \@all_tags, id_checked_tags => \@id_checked_tags, checked_location => $checked_location , prefectures => \@prefectures, array_number_prefectures => $array_number_prefectures, eventid_tagid => \@eventid_tagid});
+    return $c->render('index.tx' => {list_event_info => \@list_event_info, all_tags => \@all_tags, id_checked_tags => \@id_checked_tags, checked_location => $checked_location , prefectures => \@prefectures, array_number_prefectures => $array_number_prefectures, eventid_tagid => \@eventid_tagid});
 };
 
 post '/account/logout' => sub {
@@ -159,8 +148,8 @@ post '/account/logout' => sub {
 };
 
 #unixtimeから年、月、日、開始時刻と終了時刻を計算
+#DBがグリニッジ標準時なので、それに合わせる
 #(started_unixtime, ended_unixtime) -> 文字列：yy/mm/dd time ~ time
-#時間が正しくないかも・・・修正は後回しで
 sub changeFromUnixtime {
 #ここで引数を@_受け取る
     my ($started_unixtime, $ended_unixtime) = @_;
@@ -178,7 +167,7 @@ sub changeFromUnixtime {
     my $dis_s_hour;
     my $dis_e_hour;
 
-#数が1桁の場合に先頭に0をつける
+    #数が1桁の場合に先頭に0をつけて表示する
     if($started_min < 10) {
         $dis_s_min = ":"."0".$started_min;
     } else {
@@ -202,7 +191,8 @@ sub changeFromUnixtime {
         $dis_e_hour = " ".$ended_hour;
     }
 
-    return $started_year."/".$started_month."/".$started_day."\n".$started_hour.$dis_s_min." ~ ".$dis_e_hour.$dis_e_min;
+    return my $date_hash = {"day" => $started_year."/".$started_month."/".$started_day, "time" => $dis_s_hour.$dis_s_min." ~ ".$dis_e_hour.$dis_e_min};
+
 }
 
 1;
